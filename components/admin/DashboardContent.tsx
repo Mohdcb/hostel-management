@@ -1,22 +1,82 @@
-import React from "react";
+import React, { useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { DollarSign, TrendingUp, Users, Clock, BarChart3, Calendar, CheckCircle } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, LineChart, Line, AreaChart, Area, PieChart, Pie, Cell } from "recharts";
-import { monthlyData, occupancyData, paymentStatusData, recentPayments } from "@/lib/demo-data";
 import { Button } from "@/components/ui/button";
+import { format } from "date-fns";
 
 interface DashboardContentProps {
   selectedHostel: any;
   tenants: any[];
+  rooms: any[];
+  payments: any[];
 }
 
-const DashboardContent: React.FC<DashboardContentProps> = ({ selectedHostel, tenants }) => {
+const DashboardContent: React.FC<DashboardContentProps> = ({ selectedHostel, tenants, rooms, payments }) => {
+  const tenantLookup = useMemo(() => {
+    const map = new Map<string, any>();
+    tenants.forEach((tenant) => {
+      map.set(String(tenant.id), tenant);
+    });
+    return map;
+  }, [tenants]);
+
+  const totalEarnings = payments.filter(p => p.status === 'paid').reduce((sum, p) => sum + Number(p.amount || 0), 0);
+  const totalIncome = payments.reduce((sum, p) => sum + Number(p.amount || 0), 0);
+  const totalExpenses = Math.round(totalIncome * 0.2);
+  const pendingPayments = payments.filter(p => p.status === 'pending');
+  const pendingAmount = pendingPayments.reduce((sum, p) => sum + (p.amount || 0), 0);
+  const occupiedRooms = rooms.filter(room =>
+    tenants.some(tenant => {
+      const byId = tenant.room_id && String(tenant.room_id) === String(room.id);
+      const byNumber = tenant.room && room.number && String(tenant.room).toLowerCase() === String(room.number).toLowerCase();
+      return byId || byNumber;
+    })
+  ).length;
+  const totalRooms = rooms.length;
+  const occupancyRate = totalRooms > 0 ? Math.round((occupiedRooms / totalRooms) * 100) : 0;
+  const paymentStatusCounts = payments.reduce((acc, p) => {
+    acc[p.status] = (acc[p.status] || 0) + 1;
+    return acc;
+  }, {} as Record<string, number>);
+  const paymentStatusData = Object.entries(paymentStatusCounts).map(([status, count]) => ({
+    name: status,
+    value: count,
+    color: status === 'paid' ? '#a3e635' : status === 'pending' ? '#f59e0b' : '#3b82f6',
+  }));
+  const recentPayments = [...payments]
+    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+    .slice(0, 4)
+    .map((payment) => {
+      const tenant = payment.tenant_id ? tenantLookup.get(String(payment.tenant_id)) : null;
+      return {
+        ...payment,
+        tenantName: tenant?.name ?? payment.name ?? "Unknown Tenant",
+      };
+    });
+  const monthlyMap: Record<string, { income: number; expenses: number; occupancy: number }> = {};
+  payments.forEach((p) => {
+    if (!p?.month) return;
+    if (!monthlyMap[p.month]) monthlyMap[p.month] = { income: 0, expenses: 0, occupancy: 0 };
+    monthlyMap[p.month].income += p.amount || 0;
+    monthlyMap[p.month].expenses += Math.round((p.amount || 0) * 0.2);
+  });
+  tenants.forEach((t) => {
+    if (!t?.checkIn) return;
+    const month = String(t.checkIn).slice(0, 7);
+    if (!monthlyMap[month]) monthlyMap[month] = { income: 0, expenses: 0, occupancy: 0 };
+    monthlyMap[month].occupancy += 1;
+  });
+  const monthlyData = Object.entries(monthlyMap).map(([month, v]) => ({ month, ...v }));
+
+  const formattedToday = format(new Date(), "dd/MM/yyyy");
+
   return (
     <div className="space-y-6">
       {/* Mobile Hostel Indicator */}
-      {selectedHostel.id !== 0 && (
+      {selectedHostel && (
         <Card className="lg:hidden shadow-lg border-l-4 border-l-lime-500">
           <CardContent className="p-4">
             <div className="flex items-center justify-between">
@@ -25,8 +85,8 @@ const DashboardContent: React.FC<DashboardContentProps> = ({ selectedHostel, ten
                 <p className="text-sm text-gray-500">{selectedHostel.location}</p>
               </div>
               <div className="text-right">
-                <p className="text-sm font-medium">{selectedHostel.tenants} tenants</p>
-                <p className="text-xs text-gray-500">{selectedHostel.rooms} rooms</p>
+                <p className="text-sm font-medium">{tenants.length} tenants</p>
+                <p className="text-xs text-gray-500">{rooms.length} rooms</p>
               </div>
             </div>
           </CardContent>
@@ -45,10 +105,10 @@ const DashboardContent: React.FC<DashboardContentProps> = ({ selectedHostel, ten
             <div>
               <div className="flex items-center space-x-2 mb-2">
                 <span className="text-green-100 text-sm font-medium">Total Earnings</span>
-                <Badge className="bg-black/20 text-white text-xs px-2 py-1">+12%</Badge>
+                <Badge className="bg-black/20 text-white text-xs px-2 py-1">{totalEarnings > 0 ? `+${Math.round((totalEarnings / (totalIncome || 1)) * 100)}%` : '+0%'}</Badge>
               </div>
-              <p className="text-4xl lg:text-5xl font-bold font-playfair mb-2">₹67,000</p>
-              <p className="text-green-100 text-sm">Updated: 12/03/2025</p>
+              <p className="text-4xl lg:text-5xl font-bold font-playfair mb-2">₹{totalEarnings.toLocaleString()}</p>
+              <p className="text-green-100 text-sm">Updated: {formattedToday}</p>
             </div>
             <div className="bg-white/20 p-4 rounded-3xl">
               <DollarSign className="h-8 w-8" />
@@ -62,7 +122,7 @@ const DashboardContent: React.FC<DashboardContentProps> = ({ selectedHostel, ten
               </div>
               <div>
                 <p className="text-gray-600 text-sm font-medium">Expenses</p>
-                <p className="text-gray-900 font-bold text-lg">₹16,000</p>
+                <p className="text-gray-900 font-bold text-lg">₹{totalExpenses.toLocaleString()}</p>
               </div>
             </div>
             <div className="flex items-center space-x-3">
@@ -71,7 +131,7 @@ const DashboardContent: React.FC<DashboardContentProps> = ({ selectedHostel, ten
               </div>
               <div>
                 <p className="text-gray-600 text-sm font-medium">Income</p>
-                <p className="text-gray-900 font-bold text-lg">₹67,000</p>
+                <p className="text-gray-900 font-bold text-lg">₹{totalIncome.toLocaleString()}</p>
               </div>
             </div>
           </div>
@@ -84,8 +144,8 @@ const DashboardContent: React.FC<DashboardContentProps> = ({ selectedHostel, ten
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-gray-600 text-sm font-medium">Pending Payments</p>
-                <p className="text-2xl lg:text-3xl font-bold font-playfair text-orange-500">₹11,500</p>
-                <p className="text-gray-500 text-xs mt-1">3 tenants</p>
+                <p className="text-2xl lg:text-3xl font-bold font-playfair text-orange-500">₹{pendingAmount.toLocaleString()}</p>
+                <p className="text-gray-500 text-xs mt-1">{pendingPayments.length} tenants</p>
               </div>
               <div className="bg-orange-100 p-3 rounded-2xl">
                 <Clock className="h-6 w-6 text-orange-500" />
@@ -98,8 +158,8 @@ const DashboardContent: React.FC<DashboardContentProps> = ({ selectedHostel, ten
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-gray-600 text-sm font-medium">Total Tenants</p>
-                <p className="text-2xl lg:text-3xl font-bold font-playfair text-blue-500">24</p>
-                <p className="text-gray-500 text-xs mt-1">8 rooms occupied</p>
+                <p className="text-2xl lg:text-3xl font-bold font-playfair text-blue-500">{tenants.length}</p>
+                <p className="text-gray-500 text-xs mt-1">{occupiedRooms} rooms occupied</p>
               </div>
               <div className="bg-blue-100 p-3 rounded-2xl">
                 <Users className="h-6 w-6 text-blue-500" />
@@ -112,8 +172,8 @@ const DashboardContent: React.FC<DashboardContentProps> = ({ selectedHostel, ten
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-gray-600 text-sm font-medium">Occupancy Rate</p>
-                <p className="text-2xl lg:text-3xl font-bold font-playfair text-purple-500">96%</p>
-                <p className="text-gray-500 text-xs mt-1">+4% this month</p>
+                <p className="text-2xl lg:text-3xl font-bold font-playfair text-purple-500">{occupancyRate}%</p>
+                <p className="text-gray-500 text-xs mt-1">{totalRooms > 0 ? `${occupiedRooms}/${totalRooms} rooms` : 'No rooms'}</p>
               </div>
               <div className="bg-purple-100 p-3 rounded-2xl">
                 <TrendingUp className="h-6 w-6 text-purple-500" />
@@ -143,16 +203,8 @@ const DashboardContent: React.FC<DashboardContentProps> = ({ selectedHostel, ten
                 className="flex items-center justify-between p-4 bg-gray-50 rounded-2xl hover:bg-gray-100 transition-all hover:shadow-md"
               >
                 <div className="flex items-center space-x-4">
-                  <Avatar
-                    className={`h-12 w-12 border-3 shadow-lg ${
-                      tenant.status === "paid"
-                        ? "border-green-400"
-                        : tenant.status === "pending"
-                        ? "border-red-400"
-                        : "border-orange-400"
-                    }`}
-                  >
-                    <AvatarImage src={tenant.avatar || "/placeholder.svg"} className="object-cover" />
+                  <Avatar className="h-12 w-12 border-3 shadow-lg border-lime-400">
+                    <AvatarImage src="/placeholder.svg" className="object-cover" />
                     <AvatarFallback className="bg-lime-100 text-lime-700">
                       {tenant.name
                         .split(" ")
@@ -177,21 +229,21 @@ const DashboardContent: React.FC<DashboardContentProps> = ({ selectedHostel, ten
               <div className="bg-green-100 w-12 h-12 rounded-2xl flex items-center justify-center mx-auto mb-2">
                 <CheckCircle className="h-6 w-6 text-green-500" />
               </div>
-              <p className="text-sm font-medium text-gray-900">18 Paid</p>
+              <p className="text-sm font-medium text-gray-900">{payments.filter(p => p.status === 'paid').length} Paid</p>
               <p className="text-xs text-gray-500">This month</p>
             </div>
             <div className="text-center">
               <div className="bg-orange-100 w-12 h-12 rounded-2xl flex items-center justify-center mx-auto mb-2">
                 <Clock className="h-6 w-6 text-orange-500" />
               </div>
-              <p className="text-sm font-medium text-gray-900">4 Pending</p>
+              <p className="text-sm font-medium text-gray-900">{pendingPayments.length} Pending</p>
               <p className="text-xs text-gray-500">Due soon</p>
             </div>
             <div className="text-center">
               <div className="bg-blue-100 w-12 h-12 rounded-2xl flex items-center justify-center mx-auto mb-2">
                 <Users className="h-6 w-6 text-blue-500" />
               </div>
-              <p className="text-sm font-medium text-gray-900">24 Total</p>
+              <p className="text-sm font-medium text-gray-900">{tenants.length} Total</p>
               <p className="text-xs text-gray-500">Active tenants</p>
             </div>
           </div>
@@ -243,9 +295,9 @@ const DashboardContent: React.FC<DashboardContentProps> = ({ selectedHostel, ten
             </ResponsiveContainer>
             <div className="flex justify-center space-x-4 mt-4">
               {paymentStatusData.map((entry, index) => (
-                <div key={index} className="flex items-center space-x-2">
-                  <div className="w-3 h-3 rounded-full" style={{ backgroundColor: entry.color }}></div>
-                  <span className="text-sm text-gray-600">{entry.name}</span>
+                <div key={`legend-${index}`} className="flex items-center">
+                  <span style={{ backgroundColor: entry.color }} className="w-4 h-4 rounded-full mr-2"></span>
+                  <span>{entry.name}</span>
                 </div>
               ))}
             </div>
@@ -261,7 +313,7 @@ const DashboardContent: React.FC<DashboardContentProps> = ({ selectedHostel, ten
           </CardHeader>
           <CardContent>
             <ResponsiveContainer width="100%" height={300}>
-              <AreaChart data={occupancyData}>
+              <AreaChart data={monthlyData}>
                 <XAxis dataKey="month" />
                 <YAxis />
                 <Area
@@ -286,38 +338,23 @@ const DashboardContent: React.FC<DashboardContentProps> = ({ selectedHostel, ten
           </CardHeader>
           <CardContent>
             <div className="space-y-4">
-              {recentPayments.slice(0, 4).map((payment) => (
-                <div key={payment.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-xl">
+              {recentPayments.map((payment, index) => (
+                <div key={index} className="flex items-center justify-between p-4 bg-gray-50 rounded-2xl">
                   <div className="flex items-center space-x-3">
-                    <Avatar className="h-10 w-10 border-2 border-white shadow-sm">
-                      <AvatarImage src={payment.avatar || "/placeholder.svg"} className="object-cover" />
+                    <Avatar className="h-10 w-10 border-2 border-lime-400">
+                      <AvatarImage src={payment.avatar || "/placeholder.svg"} />
                       <AvatarFallback className="bg-lime-100 text-lime-700">
-                        {payment.name
-                          .split(" ")
-                          .map((n: string) => n[0])
-                          .join("")}
+                        {payment.tenantName
+                          ? payment.tenantName.split(" ").map((n: string) => n[0]).join("")
+                          : "?"}
                       </AvatarFallback>
                     </Avatar>
                     <div>
-                      <p className="font-semibold text-sm">{payment.name}</p>
-                      <p className="text-gray-500 text-xs">{payment.room}</p>
+                      <p className="font-playfair font-semibold text-base">{payment.tenantName}</p>
+                      <p className="text-sm text-gray-500">{payment.date}</p>
                     </div>
                   </div>
-                  <div className="text-right">
-                    <p className="font-bold text-sm">₹{payment.amount.toLocaleString()}</p>
-                    <Badge
-                      variant={
-                        payment.status === "paid"
-                          ? "default"
-                          : payment.status === "pending"
-                          ? "destructive"
-                          : "secondary"
-                      }
-                      className="text-xs"
-                    >
-                      {payment.status}
-                    </Badge>
-                  </div>
+                  <p className="font-playfair font-bold text-lg text-lime-600">₹{payment.amount?.toLocaleString()}</p>
                 </div>
               ))}
             </div>

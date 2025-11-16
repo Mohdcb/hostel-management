@@ -2,14 +2,28 @@
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import SettingsContent from "@/components/admin/SettingsContent";
+import { getCurrentSession, checkUserRole } from "@/lib/supabaseAuth";
 
 export default function AdminSettingsPage() {
   const router = useRouter();
+  
   useEffect(() => {
-    const userType = localStorage.getItem("userType");
-    if (userType !== "admin") {
+    checkAuth();
+  }, []);
+
+  const checkAuth = async () => {
+    const { session } = await getCurrentSession();
+    if (!session?.user) {
       router.push("/");
+      return;
     }
-  }, [router]);
+
+    const { role } = await checkUserRole(session.user.id);
+    if (role !== 'admin') {
+      router.push("/");
+      return;
+    }
+  };
+  
   return <SettingsContent />;
 } 

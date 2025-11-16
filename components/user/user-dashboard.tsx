@@ -8,7 +8,8 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Home, Upload, History, User, Camera, CheckCircle, Clock, Bell } from "lucide-react"
-import { paymentHistory } from "@/lib/demo-data";
+import { signOut } from "@/lib/supabaseAuth"
+
 
 interface UserDashboardProps {
   onLogout?: () => void;
@@ -370,29 +371,8 @@ function HistoryContent() {
         </CardHeader>
         <CardContent>
           <div className="space-y-4">
-            {paymentHistory.map((payment, index) => (
-              <div
-                key={index}
-                className="flex items-center justify-between p-5 bg-gray-50 rounded-2xl hover:bg-gray-100 transition-colors"
-              >
-                <div className="flex items-center space-x-4">
-                  <div className="bg-green-100 p-3 rounded-2xl">
-                    <CheckCircle className="h-6 w-6 text-green-500" />
-                  </div>
-                  <div>
-                    <p className="font-semibold">{payment.month}</p>
-                    <p className="text-gray-500 text-sm">Paid on {payment.date}</p>
-                    <p className="text-gray-500 text-sm">Mode: {payment.mode}</p>
-                  </div>
-                </div>
-                <div className="text-right">
-                  <p className="font-bold text-lg">₹{payment.amount.toLocaleString()}</p>
-                  <Badge variant="default" className="rounded-full">
-                    {payment.status}
-                  </Badge>
-                </div>
-              </div>
-            ))}
+            {/* No payment history available. Replace with Supabase data or show empty state. */}
+            <div className="text-center text-gray-400">No payment history available.</div>
           </div>
         </CardContent>
       </Card>
@@ -412,6 +392,17 @@ function HistoryContent() {
 }
 
 function ProfileContent() {
+  const handleLogout = async () => {
+    try {
+      await signOut();
+      localStorage.removeItem("userType");
+      window.location.href = "/";
+    } catch (error) {
+      console.error("Logout error:", error);
+      window.location.href = "/";
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* Profile Header */}
@@ -480,6 +471,14 @@ function ProfileContent() {
 
       <Button className="w-full bg-gradient-to-r from-lime-400 to-lime-600 text-white rounded-2xl py-4 shadow-lg hover:shadow-xl hover:from-lime-500 hover:to-lime-700 transition-all">
         Save Changes
+      </Button>
+      {/* Logout Button */}
+      <Button
+        variant="outline"
+        className="w-full mt-2 rounded-2xl px-6 bg-transparent border-red-400 text-red-600 hover:bg-red-50 hover:border-red-600"
+        onClick={handleLogout}
+      >
+        Logout
       </Button>
     </div>
   )

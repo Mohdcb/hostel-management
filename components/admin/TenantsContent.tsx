@@ -1,64 +1,216 @@
-import React, { useState } from "react";
+import React, { useContext, useEffect, useMemo, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { Plus, Eye, Edit, Trash2, Search } from "lucide-react";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
-import { initialRooms } from "@/lib/demo-data";
+import { createTenant, updateTenant, deleteTenant } from "@/lib/tenantsApi";
+import { HostelContext } from "@/app/admin/layout";
 
 interface TenantsContentProps {
   tenants: any[];
   setTenants: React.Dispatch<React.SetStateAction<any[]>>;
+  rooms: any[];
+  roomFilter?: string | null;
 }
 
-const statusOptions = [
-  { label: "All", value: "all" },
-  { label: "Paid", value: "paid" },
-  { label: "Pending", value: "pending" },
-  { label: "Partial", value: "partial" },
-];
-
-const TenantsContent: React.FC<TenantsContentProps> = ({ tenants, setTenants }) => {
+const TenantsContent: React.FC<TenantsContentProps> = ({ tenants, setTenants, rooms, roomFilter }) => {
   const [editingTenant, setEditingTenant] = useState<any | null>(null);
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [viewingTenant, setViewingTenant] = useState<any | null>(null);
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState("all");
+  const [actionLoading, setActionLoading] = useState(false);
+  const { selectedHostel } = useContext(HostelContext);
 
-  const handleAddTenant = (newTenant: any) => {
-    const tenant = {
-      ...newTenant,
-      id: Math.max(...tenants.map((t: any) => t.id)) + 1,
-      status: "pending",
-      avatar: "/profile-demo.jpg",
+  const roomsForSelectedHostel = useMemo(() => {
+    if (!selectedHostel) return rooms;
+    return rooms.filter((room) => String(room.hostel_id) === String(selectedHostel.id));
+  }, [rooms, selectedHostel]);
+
+  const getRoomsForTenant = (tenantItem: any) => {
+    if (!tenantItem?.hostel_id) return roomsForSelectedHostel;
+    const filtered = rooms.filter((room) => String(room.hostel_id) === String(tenantItem.hostel_id));
+    return filtered.length > 0 ? filtered : roomsForSelectedHostel;
+  };
+
+  const getRoomLabel = (tenantItem: any) => {
+    if (tenantItem?.room) return tenantItem.room;
+    if (tenantItem?.room_id) {
+      const roomMatch = rooms.find((room) => String(room.id) === String(tenantItem.room_id));
+      if (roomMatch?.number) {
+        return roomMatch.number;
+      }
+    }
+    return "";
+  };
+
+  const getTenantHostelIdOrName = (tenantItem: any) => {
+    if (!tenantItem) return { id: null as string | null, name: null as string | null };
+
+    const directIdMatches = [
+      tenantItem.hostel_id,
+      tenantItem.hostelId,
+      tenantItem.hostel?.id,
+      tenantItem.hostel?.hostel_id,
+    ].filter(Boolean);
+
+    const nameMatches = [
+      tenantItem.hostel_name,
+      tenantItem.hostelName,
+      tenantItem.hostel?.name,
+    ].filter(Boolean);
+
+    if (tenantItem.room_id || tenantItem.room) {
+      const roomMatch = rooms.find((room) => {
+        const sameId = tenantItem.room_id && String(room.id) === String(tenantItem.room_id);
+        const sameNumber = tenantItem.room && room.number && String(room.number).toLowerCase() === String(tenantItem.room).toLowerCase();
+        return sameId || sameNumber;
+      });
+      if (roomMatch?.hostel_id) {
+        directIdMatches.unshift(roomMatch.hostel_id);
+      }
+      if (roomMatch?.hostel?.name) {
+        nameMatches.unshift(roomMatch.hostel.name);
+      }
+    }
+
+    return {
+      id: directIdMatches.length > 0 ? String(directIdMatches[0]) : null,
+      name: nameMatches.length > 0 ? String(nameMatches[0]) : null,
     };
-    setTenants([...tenants, tenant]);
-    setIsAddDialogOpen(false);
   };
 
-  const handleEditTenant = (updatedTenant: any) => {
-    setTenants(tenants.map((t: any) => (t.id === updatedTenant.id ? updatedTenant : t)));
-    setEditingTenant(null);
+  const handleAddTenant = async (newTenant: any) => {
+    setActionLoading(true);
+    try {
+      if (!selectedHostel) {
+        alert("Please select a hostel before adding a tenant.");
+        return;
+      }
+      if (!newTenant.room) {
+        alert("Please select a room for the tenant.");
+        return;
+      }
+
+      const payload = {
+        ...newTenant,
+        hostel_id: selectedHostel.id,
+      };
+
+      const created = await createTenant(payload);
+      const normalized = {
+        ...created,
+        room: created.room ?? newTenant.room,
+        room_id: created.room_id ?? newTenant.roomId,
+        hostel_id: created.hostel_id ?? selectedHostel.id,
+        checkIn: created.checkIn ?? created.check_in_date ?? newTenant.checkIn,
+      };
+      setTenants([...tenants, normalized]);
+      setIsAddDialogOpen(false);
+    } catch (err) {
+      // Optionally show error
+    } finally {
+      setActionLoading(false);
+    }
   };
 
-  const handleDeleteTenant = (tenantId: number) => {
-    setTenants(tenants.filter((t: any) => t.id !== tenantId));
+  const handleEditTenant = async (updatedTenant: any) => {
+    setActionLoading(true);
+    try {
+      const payload = {
+        ...updatedTenant,
+        room: updatedTenant.room,
+        room_id: updatedTenant.roomId ?? updatedTenant.room_id,
+        checkIn: undefined,
+      };
+      const updated = await updateTenant(updatedTenant.id, payload);
+      setTenants(tenants.map((t: any) => (t.id === updatedTenant.id ? updated : t)));
+      setEditingTenant(null);
+    } catch (err) {
+      // Optionally show error
+    } finally {
+      setActionLoading(false);
+    }
   };
 
-  // Filtering logic
-  const filteredTenants = tenants.filter((tenant) => {
-    const matchesSearch =
-      tenant.name.toLowerCase().includes(search.toLowerCase()) ||
-      tenant.room.toLowerCase().includes(search.toLowerCase()) ||
-      tenant.phone.toLowerCase().includes(search.toLowerCase()) ||
-      tenant.email.toLowerCase().includes(search.toLowerCase());
-    const matchesStatus = statusFilter === "all" || tenant.status === statusFilter;
-    return matchesSearch && matchesStatus;
-  });
+  const handleDeleteTenant = async (tenantId: string) => {
+    setActionLoading(true);
+    try {
+      await deleteTenant(tenantId);
+      setTenants(tenants.filter((t: any) => t.id !== tenantId));
+    } catch (err) {
+      // Optionally show error
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  // Filtering logic (search only)
+  const filteredTenants = useMemo(() => {
+    const searchValue = search.trim().toLowerCase();
+    const normalizedRoomFilter = roomFilter ? roomFilter.toString().toLowerCase() : null;
+
+    return tenants.filter((tenant) => {
+      const { id: tenantHostelId, name: tenantHostelName } = getTenantHostelIdOrName(tenant);
+
+      if (selectedHostel) {
+        const matchesHostel =
+          (tenantHostelId && String(tenantHostelId) === String(selectedHostel.id)) ||
+          (tenantHostelName && tenantHostelName.toLowerCase() === selectedHostel.name.toLowerCase());
+
+        const matchesViaRoom = rooms.some((room) => {
+          const sameId = tenant.room_id && String(room.id) === String(tenant.room_id);
+          const sameNumber =
+            tenant.room &&
+            room.number &&
+            String(room.number).toLowerCase() === String(tenant.room).toLowerCase();
+          const roomHostelMatch =
+            String(room.hostel_id) === String(selectedHostel.id) ||
+            (room.hostel?.name && room.hostel.name.toLowerCase() === selectedHostel.name.toLowerCase());
+          return roomHostelMatch && (sameId || sameNumber);
+        });
+
+        if (!matchesHostel && !matchesViaRoom) {
+          return false;
+        }
+      }
+
+      if (normalizedRoomFilter) {
+        const roomLabel = getRoomLabel(tenant).toLowerCase();
+        const matchesRoomNumber = roomLabel === normalizedRoomFilter;
+        const matchesRoomId = tenant.room_id && String(tenant.room_id).toLowerCase() === normalizedRoomFilter;
+        if (!matchesRoomNumber && !matchesRoomId) {
+          return false;
+        }
+      }
+
+      if (!searchValue) return true;
+
+      const roomLabel = getRoomLabel(tenant);
+      const phone = tenant.phone ?? "";
+      const email = tenant.email ?? "";
+
+      return (
+        tenant.name?.toLowerCase().includes(searchValue) ||
+        roomLabel.toLowerCase().includes(searchValue) ||
+        phone.toLowerCase().includes(searchValue) ||
+        email.toLowerCase().includes(searchValue)
+      );
+    });
+  }, [tenants, selectedHostel, roomFilter, search, rooms]);
+
+  useEffect(() => {
+    console.log("[TenantsContent] state", {
+      selectedHostel,
+      totalTenants: tenants.length,
+      filteredTenants: filteredTenants.length,
+      sampleTenant: tenants[0],
+      roomFilter,
+      rooms,
+    });
+  }, [tenants, filteredTenants, selectedHostel, roomFilter, rooms]);
 
   return (
     <div className="space-y-6">
@@ -79,11 +231,11 @@ const TenantsContent: React.FC<TenantsContentProps> = ({ tenants, setTenants }) 
               <DialogTitle className="font-playfair">Add New Tenant</DialogTitle>
               <div>Enter the details for the new tenant.</div>
             </DialogHeader>
-            <TenantForm onSubmit={handleAddTenant} />
+            <TenantForm onSubmit={handleAddTenant} rooms={roomsForSelectedHostel} />
           </DialogContent>
         </Dialog>
       </div>
-      {/* Search and Filter Row */}
+      {/* Search Row */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div className="flex items-center gap-2 w-full sm:w-1/2">
           <div className="relative w-full">
@@ -97,20 +249,16 @@ const TenantsContent: React.FC<TenantsContentProps> = ({ tenants, setTenants }) 
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
           </div>
         </div>
-        <div className="flex items-center gap-2">
-          {statusOptions.map((option) => (
-            <Button
-              key={option.value}
-              variant={statusFilter === option.value ? "default" : "outline"}
-              className={`rounded-full px-4 py-1 text-sm ${statusFilter === option.value ? "gradient-green text-white" : ""}`}
-              onClick={() => setStatusFilter(option.value)}
-            >
-              {option.label}
-            </Button>
-          ))}
-        </div>
       </div>
       <div className="grid gap-4">
+        {filteredTenants.length === 0 && (
+          <Card className="p-6 text-center text-gray-500 border-dashed border-2">
+            <CardContent>
+              <p>No tenants found for the current filters.</p>
+              <p className="text-sm mt-1">Try selecting "All Hostels" or adding a new tenant.</p>
+            </CardContent>
+          </Card>
+        )}
         {filteredTenants.map((tenant) => (
           <Dialog key={tenant.id} open={viewingTenant?.id === tenant.id} onOpenChange={(open) => { if (!open) setViewingTenant(null); }}>
             <Card
@@ -118,7 +266,7 @@ const TenantsContent: React.FC<TenantsContentProps> = ({ tenants, setTenants }) 
               onClick={() => setViewingTenant(tenant)}
             >
               <CardContent className="p-6">
-                {/* Edit and Remove icons in top right, with status badge below in a grid */}
+                {/* Edit and Remove icons in top right */}
                 <div className="absolute top-4 right-4 flex flex-col items-center z-10 w-24">
                   <div className="grid grid-cols-2 gap-2 w-full">
                     <Dialog>
@@ -137,7 +285,13 @@ const TenantsContent: React.FC<TenantsContentProps> = ({ tenants, setTenants }) 
                         <DialogHeader>
                           <DialogTitle className="font-playfair">Edit Tenant</DialogTitle>
                         </DialogHeader>
-                        {editingTenant && <TenantForm tenant={editingTenant} onSubmit={handleEditTenant} />}
+                        {editingTenant && (
+                          <TenantForm
+                            tenant={editingTenant}
+                            onSubmit={handleEditTenant}
+                            rooms={getRoomsForTenant(editingTenant)}
+                          />
+                        )}
                       </DialogContent>
                     </Dialog>
                     <AlertDialog>
@@ -166,41 +320,14 @@ const TenantsContent: React.FC<TenantsContentProps> = ({ tenants, setTenants }) 
                       </AlertDialogContent>
                     </AlertDialog>
                   </div>
-                  {/* Status badge below icons, full width */}
-                  <div className="w-full flex justify-center mt-2">
-                    <Badge
-                      variant={
-                        tenant.status === "paid"
-                          ? "default"
-                          : tenant.status === "pending"
-                          ? "destructive"
-                          : "secondary"
-                      }
-                      className="rounded-[10px] shadow-sm px-3 py-1 w-full text-center justify-center"
-                    >
-                      {tenant.status}
-                    </Badge>
-                  </div>
                 </div>
-                {/* Main card content */}
                 <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-                  <div className="flex items-center space-x-4">
-                    <Avatar className="h-16 w-16 border-3 border-white shadow-lg rounded-[16px]">
-                      <AvatarImage src={tenant.avatar || "/placeholder.svg"} className="object-cover rounded-[16px]" />
-                      <AvatarFallback className="bg-lime-100 text-lime-700 text-lg rounded-[16px]">
-                        {tenant.name
-                          .split(" ")
-                          .map((n: string) => n[0])
-                          .join("")}
-                      </AvatarFallback>
-                    </Avatar>
-                    <div>
-                      <h3 className="font-playfair font-semibold text-lg">{tenant.name}</h3>
-                      <p className="text-gray-500 text-sm">Room: {tenant.room}</p>
-                      <p className="text-gray-500 text-sm">Last Payment: {tenant.lastPaymentDate || 'N/A'}</p>
-                    </div>
+                  <div>
+                    <h3 className="font-playfair font-semibold text-lg">{tenant.name}</h3>
+                    <p className="text-gray-500 text-sm">Room: {getRoomLabel(tenant) || "Not assigned"}</p>
+                    <p className="text-gray-500 text-sm">Phone: {tenant.phone || "N/A"}</p>
+                    <p className="text-gray-500 text-sm">Email: {tenant.email || "N/A"}</p>
                   </div>
-                  {/* Removed badge from here */}
                 </div>
               </CardContent>
             </Card>
@@ -217,20 +344,29 @@ const TenantsContent: React.FC<TenantsContentProps> = ({ tenants, setTenants }) 
   );
 };
 
-function TenantForm({ tenant, onSubmit }: { tenant?: any; onSubmit: any }) {
+function TenantForm({ tenant, onSubmit, rooms }: { tenant?: any; onSubmit: any; rooms: any[] }) {
   const [formData, setFormData] = useState({
     name: tenant?.name || "",
+    roomId: tenant?.room_id ? String(tenant.room_id) : "",
     room: tenant?.room || "",
     phone: tenant?.phone || "",
     email: tenant?.email || "",
-    checkIn: tenant?.checkIn || "",
-    emergencyContact: tenant?.emergencyContact || "",
+    checkIn: tenant?.checkIn || tenant?.check_in_date || "",
+    password: "",
   });
-  const [rooms] = useState(initialRooms);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    onSubmit(tenant ? { ...tenant, ...formData } : formData);
+    if (tenant) {
+      const { password, ...rest } = formData;
+      onSubmit({
+        ...tenant,
+        ...rest,
+      });
+      return;
+    }
+
+    onSubmit(formData);
   };
 
   return (
@@ -249,17 +385,26 @@ function TenantForm({ tenant, onSubmit }: { tenant?: any; onSubmit: any }) {
           <Label htmlFor="room">Room Number</Label>
           <select
             id="room"
-            value={formData.room}
-            onChange={(e) => setFormData({ ...formData, room: e.target.value })}
-            className="w-full p-2 border rounded-xl bg-white focus:ring-2 focus:ring-lime-500 focus:border-transparent transition-all text-sm font-medium"
+            value={formData.roomId || ""}
+            onChange={(e) => {
+              const value = e.target.value;
+              const selectedRoom = rooms.find((room: any) => String(room.id) === value);
+              setFormData({
+                ...formData,
+                roomId: value,
+                room: selectedRoom?.number || "",
+              });
+            }}
+            className="w-full p-2 border rounded-xl bg-white focus:ring-2 focus:ring-lime-500 focus-border-transparent transition-all text-sm font-medium"
             required
           >
             <option value="">Select Room</option>
             {rooms.map((room: any) => (
-              <option key={room.number} value={room.number}>
+              <option key={room.id} value={room.id}>
                 {room.number}
               </option>
             ))}
+            {rooms.length === 0 && <option value="" disabled>No rooms available</option>}
           </select>
         </div>
       </div>
@@ -284,27 +429,28 @@ function TenantForm({ tenant, onSubmit }: { tenant?: any; onSubmit: any }) {
           />
         </div>
       </div>
-      <div className="grid grid-cols-2 gap-4">
-        <div className="space-y-2">
-          <Label htmlFor="checkIn">Check-in Date</Label>
-          <Input
-            id="checkIn"
-            type="date"
-            value={formData.checkIn}
-            onChange={(e) => setFormData({ ...formData, checkIn: e.target.value })}
-            required
-          />
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="emergencyContact">Emergency Contact</Label>
-          <Input
-            id="emergencyContact"
-            value={formData.emergencyContact}
-            onChange={(e) => setFormData({ ...formData, emergencyContact: e.target.value })}
-            required
-          />
-        </div>
+      <div className="space-y-2">
+        <Label htmlFor="checkIn">Check-in Date</Label>
+        <Input
+          id="checkIn"
+          type="date"
+          value={formData.checkIn}
+          onChange={(e) => setFormData({ ...formData, checkIn: e.target.value })}
+          required
+        />
       </div>
+      {!tenant && (
+        <div className="space-y-2">
+          <Label htmlFor="password">Set Password for Tenant Login</Label>
+          <Input
+            id="password"
+            type="password"
+            value={formData.password}
+            onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+            required
+          />
+        </div>
+      )}
       <div className="flex justify-end">
         <Button type="submit" className="gradient-green text-white">
           {tenant ? "Update Tenant" : "Add Tenant"}
@@ -317,42 +463,22 @@ function TenantForm({ tenant, onSubmit }: { tenant?: any; onSubmit: any }) {
 function TenantDetails({ tenant }: { tenant: any }) {
   return (
     <div className="space-y-4">
-      <div className="flex items-center space-x-4">
-        <Avatar className="h-20 w-20 border-3 border-lime-200">
-          <AvatarImage src={tenant.avatar || "/placeholder.svg"} className="object-cover" />
-          <AvatarFallback className="bg-lime-100 text-lime-700 text-xl">
-            {tenant.name
-              .split(" ")
-              .map((n: string) => n[0])
-              .join("")}
-          </AvatarFallback>
-        </Avatar>
-        <div>
-          <h3 className="font-playfair text-xl font-bold">{tenant.name}</h3>
-          <p className="text-gray-600">Room {tenant.room}</p>
-          <Badge
-            variant={tenant.status === "paid" ? "default" : tenant.status === "pending" ? "destructive" : "secondary"}
-          >
-            {tenant.status}
-          </Badge>
-        </div>
+      <div>
+        <h3 className="font-playfair text-xl font-bold">{tenant.name}</h3>
+        <p className="text-gray-600">Room {tenant.room || "Not assigned"}</p>
       </div>
       <div className="grid grid-cols-2 gap-4">
         <div>
           <Label className="text-sm font-medium text-gray-500">Phone</Label>
-          <p className="font-medium">{tenant.phone}</p>
+          <p className="font-medium">{tenant.phone || "N/A"}</p>
         </div>
         <div>
           <Label className="text-sm font-medium text-gray-500">Email</Label>
-          <p className="font-medium">{tenant.email}</p>
+          <p className="font-medium">{tenant.email || "N/A"}</p>
         </div>
         <div>
           <Label className="text-sm font-medium text-gray-500">Check-in</Label>
-          <p className="font-medium">{tenant.checkIn}</p>
-        </div>
-        <div>
-          <Label className="text-sm font-medium text-gray-500">Emergency Contact</Label>
-          <p className="font-medium">{tenant.emergencyContact}</p>
+          <p className="font-medium">{tenant.checkIn || tenant.check_in_date || "N/A"}</p>
         </div>
       </div>
     </div>
